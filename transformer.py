@@ -24,21 +24,32 @@ def scaled_dot_product(q, k, v, mask = None):
 	attn_logits = attn_logits / math.sqrt(d_k)
 	if mask is not None:
 		attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
-	attention = F.softmax(attn_lgots, dim=-1)
+	attention = F.softmax(attn_logits, dim=-1)
 	# compute {soft(QK^t/sqrt(d))}V
 	values = torch.matmul(attention, v)
 	return values, attention
 
+
+class WordEmbedder(nn.Module):
+
+	def __init__(self, vocab_size, embed_dim):
+		super().__init__()
+		self.embedder = nn.Embedding(vocab_size, embed_dim)
+
+	def forward(self, word):
+		return self.embedder(word)
+
+
 class MultiheadAttention(nn.Module):
 	def __init__(self, input_dim, embed_dim, num_heads):
 		super().__init__()
-		assert embed_init % num_heads == 0, "Embedding dimension must be 0 modulo number of heads"
+		assert embed_dim % num_heads == 0, "Embedding dimension must be 0 modulo number of heads"
 		# embed_dim is the stacked embedded vectors
 		self.embed_dim = embed_dim
 		self.num_heads = num_heads
 		# head_dim is the dimension of each individual embedding head (like channel in cnn)
 		# num_heads ~ channels in cnn
-		self.head_dim = embed // num_heads
+		self.head_dim = embed_dim // num_heads
 		
 		self.q_proj = nn.Linear(input_dim, embed_dim) # q,k,v, each has dim = embed_dim
 		self.v_proj = nn.Linear(input_dim, embed_dim)
@@ -53,9 +64,9 @@ class MultiheadAttention(nn.Module):
 		nn.init.xavier_uniform_(self.q_proj.weight)
 		self.q_proj.bias.data.fill_(0)
 		nn.init.xavier_uniform_(self.k_proj.weight)
-                self.k_proj.bias.data.fill_(0)
+		self.k_proj.bias.data.fill_(0)
 		nn.init.xavier_uniform_(self.v_proj.weight)
-                self.v_proj.bias.data.fill_(0)
+		self.v_proj.bias.data.fill_(0)
 		nn.init.xavier_uniform_(self.o_proj.weight)
 		self.o_proj.bias.data.fill_(0)
 
@@ -66,7 +77,7 @@ class MultiheadAttention(nn.Module):
 	# because the input (forward) of mutlihead attention in decoder is different
 	# unlike in the encoder the input for q,k,v inputs are the same
 	def forward(self, xq, xv, xk, mask = None, return_attention = False):
-		batch_size, seq_length, embed_dim = x.size()
+		batch_size, seq_length, embed_dim = xq.size()
 		# separate q, k, v from linear output
                 # q, k, v are learned separately
 		q = self.q_proj(xq).view(batch_size, seq_length, self.num_heads, embed_dim)
@@ -90,7 +101,7 @@ class MultiheadAttention(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-	def __init__(self, input_dim, num_heads, dim_feedforward, dropout = 0.8):
+	def __init__(self, input_dim, num_heads, dim_feedforward = 2, dropout = 0.8):
 		"""
 		Inputs: 
 			input_dim - Dimensionality of the input
@@ -102,12 +113,12 @@ class EncoderBlock(nn.Module):
 		super().__init__()
 
 		# attention layer
-		self.self_attn = MultiheadAttentioin(input_dim, input_dim, num_heads)
+		self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
 		
 		# two-layer MLP
 		self.linear_net = nn.Sequential(
 			nn.Linear(input_dim, dim_feedforward),
-			nn.Dropout(droput),
+			nn.Dropout(dropout),
 			nn.ReLU(inplace=True),
 			nn.Linear(dim_feedforward, input_dim)
 		)
@@ -117,7 +128,6 @@ class EncoderBlock(nn.Module):
 		self.norm2 = nn.LayerNorm(input_dim)
 		self.dropout1 = nn.Dropout(dropout)
 		self.dropout2 = nn.Dropout(dropout)
-
 
 	def forward(self, x, mask = None):
 		# attention part
@@ -134,57 +144,53 @@ class EncoderBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-        def __init__(self, input_dim, num_heads, dim_feedforward, dropout = 0.8):
-                """
-                Inputs:
-                        input_dim - Dimensionality of the input
-                        num_heads - Number of heads to use in the attention block
-                        dim_feedforward - Dimensionality of the hidden layer in the MLP
-                        dropout - Dropout probability to use in the dropout layers
-                *** feedforward architecture can be customized
-                """
-                super().__init__()
 
-                # attention layer
-                self.self_attn1 = MultiheadAttention(input_dim, input_dim, num_heads)
+	def __init__(self, input_dim, num_heads, dim_feedforward=2, dropout=0.8):
+
+		"""
+		Inputs:
+			input_dim - Dimensionality of the input
+			num_heads - Number of heads to use in the attention block
+			dim_feedforward - Dimensionality of the hidden layer in the MLP
+			dropout - Dropout probability to use in the dropout layers
+        Feedforward architecture can be customized
+		"""
+
+		super().__init__()
+
+		# attention layer
+		self.self_attn1 = MultiheadAttention(input_dim, input_dim, num_heads)
 		self.self_attn2 = MultiheadAttention(input_dim, input_dim, num_heads)
-		
-                # two-layer MLP
-                self.linear_net = nn.Sequential(
-                        nn.Linear(input_dim, dim_feedforward),
-                        nn.Dropout(droput),
-                        nn.ReLU(inplace=True),
-                        nn.Linear(dim_feedforward, input_dim)
-                )
 
-                # layers to apply in between the main layers
-                self.norm1 = nn.LayerNorm(input_dim)
-                self.norm2 = nn.LayerNorm(input_dim)
+		# two-layer MLP
+		self.linear_net = nn.Sequential(nn.Linear(input_dim, dim_feedforward),
+										nn.Dropout(dropout),
+										nn.ReLU(inplace=True),
+										nn.Linear(dim_feedforward, input_dim))
+
+		# layers to apply in between the main layers
+		self.norm1 = nn.LayerNorm(input_dim)
+		self.norm2 = nn.LayerNorm(input_dim)
 		self.norm3 = nn.LayerNorm(input_dim)
-                self.dropout1 = nn.Dropout(dropout)
+		self.dropout1 = nn.Dropout(dropout)
 		self.dropout2 = nn.Dropout(dropout)
 		self.dropout3 = nn.Dropout(dropout)
-		
-			
-	 def forward(self, x, e_outputs, src_mask = None, tar_mask = None):
-                # attention part
+
+	def forward(self, x, e_outputs, src_mask=None, tar_mask=None):
+		# attention part
 		x = self.norm1(x)
-                x = x + self.dropout1(self.self_attn1(x,x,x, mask = tar_mask))
+		x = x + self.dropout1(self.self_attn1(x, x, x, mask=tar_mask))
 		x = self.norm2(x)
-                x = x + self.dropout2(self.self_attn2(x, e_outputs, e_outputs, src_mask))
-                x = self.norm3(x)
-
-                # MLP part
-                linear_out = self.linear_net(x)
-                x = x + self.dropout3(linear_out)
-
-                return x
-
-
-
+		x = x + self.dropout2(self.self_attn2(x, e_outputs, e_outputs, src_mask))
+		x = self.norm3(x)
+		# MLP part
+		linear_out = self.linear_net(x)
+		x = x + self.dropout3(linear_out)
+		return x
 
 
 class TransformerEncoder(nn.Module):
+
 	def __init__(self, num_layers, **block_args):
 		super().__init__()
 		self.layers = nn.ModuleList([EncoderBlock(**block_args) for _ in range(num_layers)])
@@ -200,27 +206,40 @@ class TransformerEncoder(nn.Module):
 			_, attn_map = l.self_attn(x, mask = mask, return_attention = True)
 			attention_maps.append(attn_map)
 			x = l(x)
-
 		return attention_maps
 
 
 class TransformerDecoder(nn.Module):
-        def __init__(self, num_layers, **block_args):
-                super().__init__()
-                self.layers = nn.ModuleList([DecoderBlock(**block_args) for _ in range(num_layers)])
+	def __init__(self, num_layers, **block_args):
+		super().__init__()
+		self.layers = nn.ModuleList([DecoderBlock(**block_args) for _ in range(num_layers)])
 
-        def forward(self, x,e_outputs, src_mask = None, tar_mask = None):
-                for l in self.layers:
-                        x = l(x, e_outputs, src_mask, tar_mask)
-                return x
+	def forward(self, x,e_outputs, src_mask = None, tar_mask = None):
+		for l in self.layers:
+			x = l(x, e_outputs, src_mask, tar_mask)
+		return x
 
-        def get_attention_maps(self, x, mask = None):
-                attention_maps = []
-                for l in self.layers:
-                        _, attn_map = l.self_attn(x, mask = mask, return_attention = True)
-                        attention_maps.append(attn_map)
-                        x = l(x)
+	def get_attention_maps(self, x, mask = None):
+		attention_maps = []
+		for l in self.layers:
+			_, attn_map = l.self_attn(x, mask = mask, return_attention = True)
+			attention_maps.append(attn_map)
+			x = l(x)
+		return attention_maps
 
-                return attention_maps
+
+class Transformer(nn.Module):
+	def __init__(self, src_input, tar_input, num_layers, num_heads):
+		super().__init__()
+		self.encoder = TransformerEncoder(num_layers, src_input, num_heads)
+		self.decoder = TransformerDecoder(num_layers, tar_input, num_heads)
+		self.out = nn.Linear(tar_input, tar_input)
+
+	def forward(self, src, tar, src_mask, tar_mask):
+		e_outputs = self.encoder(src, src_mask)
+		d_outputs = self.decoder(tar, e_outputs, src_mask, tar_mask)
+		output = self.out(d_outputs)
+
+		return output
 
 
