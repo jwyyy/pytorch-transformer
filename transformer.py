@@ -13,11 +13,11 @@ from layers import TransformerEncoder, TransformerDecoder
 
 
 class Transformer(nn.Module):
-	def __init__(self, src_input, tar_input, num_layers, num_heads):
+	def __init__(self, src_vocab, tar_vocab, embed_dim, num_layers, num_heads):
 		super().__init__()
-		self.encoder = TransformerEncoder(num_layers, src_input, num_heads)
-		self.decoder = TransformerDecoder(num_layers, tar_input, num_heads)
-		self.out = nn.Linear(tar_input, tar_input)
+		self.encoder = TransformerEncoder(num_layers, src_vocab, embed_dim, num_heads)
+		self.decoder = TransformerDecoder(num_layers, tar_vocab, embed_dim, num_heads)
+		self.out = nn.Linear(embed_dim, tar_vocab)
 
 	def forward(self, src, tar, src_mask, tar_mask):
 		e_outputs = self.encoder(src, src_mask)
