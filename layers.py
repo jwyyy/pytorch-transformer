@@ -1,17 +1,18 @@
 import torch
 import torch.nn as nn
+import math
 import torch.nn.functional as F
+from embedder import WordEmbedder, PositionEncoder
 
 
 def scaled_dot_product(q, k, v, mask=None):
     # get the dimension of the embedded vector (1-d)
     d_k = q.size()[-1]
     # compute Q(K^t)
-    attn_logits = torch.matmul(q, k.transpose(-2, -1))  # transpose the last two dimensions
-    attn_logits = attn_logits / math.sqrt(d_k)
+    attn_logits = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
         attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
-    attention = F.softmax(attn_logits, dim=-1)
+    attention = F.softmax(attn_logits, dim=-1) # dim = -1 means the last dimension
     # compute {soft(QK^t/sqrt(d))}V
     values = torch.matmul(attention, v)
     return values, attention
@@ -56,9 +57,9 @@ class MultiheadAttention(nn.Module):
         batch_size, seq_length, embed_dim = xq.size()
         # separate q, k, v from linear output
         # q, k, v are learned separately
-        q = self.q_proj(xq).view(batch_size, seq_length, self.num_heads, embed_dim)
-        v = self.v_proj(xv).view(batch_size, seq_length, self.num_heads, embed_dim)
-        k = self.k_proj(xk).view(batch_size, seq_length, self.num_heads, embed_dim)
+        q = self.q_proj(xq).view(batch_size, seq_length, self.num_heads, self.head_dim)
+        v = self.v_proj(xv).view(batch_size, seq_length, self.num_heads, self.head_dim)
+        k = self.k_proj(xk).view(batch_size, seq_length, self.num_heads, self.head_dim)
 
         q = q.transpose(1, 2)
         v = v.transpose(1, 2)
@@ -166,11 +167,16 @@ class DecoderBlock(nn.Module):
 
 class TransformerEncoder(nn.Module):
 
-    def __init__(self, num_layers, **block_args):
+    def __init__(self, num_layers, vocab_size, embed_dim, num_heads, dim_feedforward=2, dropout=0.8):
         super().__init__()
-        self.layers = nn.ModuleList([EncoderBlock(**block_args) for _ in range(num_layers)])
+        self.embed = WordEmbedder(vocab_size, embed_dim)
+        self.pE = PositionEncoder(embed_dim)
+        self.layers = nn.ModuleList([EncoderBlock(embed_dim, num_heads, dim_feedforward, dropout)
+                                     for _ in range(num_layers)])
 
     def forward(self, x, mask=None):
+        x = self.embed(x)
+        x = self.pE(x)
         for l in self.layers:
             x = l(x, mask=mask)
         return x
@@ -185,11 +191,16 @@ class TransformerEncoder(nn.Module):
 
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, num_layers, **block_args):
+    def __init__(self, num_layers, vocab_size, embed_dim, num_heads, dim_feedforward=2, dropout=0.8):
         super().__init__()
-        self.layers = nn.ModuleList([DecoderBlock(**block_args) for _ in range(num_layers)])
+        self.embed = WordEmbedder(vocab_size, embed_dim)
+        self.pE = PositionEncoder(embed_dim)
+        self.layers = nn.ModuleList([DecoderBlock(embed_dim, num_heads, dim_feedforward, dropout)
+                                     for _ in range(num_layers)])
 
     def forward(self, x, e_outputs, src_mask=None, tar_mask=None):
+        x = self.embed(x)
+        x = self.pE(x)
         for l in self.layers:
             x = l(x, e_outputs, src_mask, tar_mask)
         return x
