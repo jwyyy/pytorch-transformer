@@ -106,6 +106,10 @@ class EncoderBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
+    def _reset_parameters(self):
+        for params in self.linear_net:
+            nn.init.xavier_uniform_(params)
+
     def forward(self, x, mask=None):
         # attention part
         attn_out = self.self_attn(x, x, x, mask=None)
@@ -151,6 +155,10 @@ class DecoderBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
+
+    def _reset_parameters(self):
+        for params in self.linear_net:
+            nn.init.xavier_uniform_(params)
 
     def forward(self, x, e_outputs, src_mask=None, tar_mask=None):
         # attention part
